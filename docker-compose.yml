@@ -1,0 +1,339 @@
+x-airflow-common: &airflow-common
+  build: ./airflow
+  environment: &airflow-common-env
+    AIRFLOW__CORE__EXECUTOR: LocalExecutor
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres/airflow
+    AIRFLOW__CORE__FERNET_KEY: 'ZmDfcTF7_60GrrY167zsiPd67pEvs0aGOv2oasOM1Pg='
+    AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: 'false'
+    AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
+    AIRFLOW__CORE__AUTH_MANAGER: airflow.providers.fab.auth_manager.fab_auth_manager.FabAuthManager
+    AIRFLOW__SCHEDULER__ENABLE_HEALTH_CHECK: 'true'
+    AIRFLOW__WEBSERVER__SECRET_KEY: 'spark-minio-pipeline-secret'
+    AIRFLOW__API__SECRET_KEY: 'spark-minio-pipeline-secret'
+    AIRFLOW__CORE__EXECUTION_API_SERVER_URL: 'http://airflow-webserver:8080/execution/'
+    AIRFLOW__API_AUTH__JWT_SECRET: 'spark-minio-pipeline-jwt-secret-key-32ch'
+    AIRFLOW__LOGGING__REMOTE_LOGGING: 'true'
+    AIRFLOW__LOGGING__REMOTE_BASE_LOG_FOLDER: 's3://pipeline-logs/airflow/'
+    AIRFLOW__LOGGING__REMOTE_LOG_CONN_ID: 'minio_default'
+    AIRFLOW__LOGGING__ENCRYPT_S3_LOGS: 'false'
+    PYSPARK_DRIVER_PYTHON: python3
+    PYSPARK_PYTHON: python3.13
+    SPARK_MASTER_URL: spark://spark-master:7077
+    MINIO_ENDPOINT: http://minio:9000
+    MINIO_ACCESS_KEY: ${MINIO_ROOT_USER:-minioadmin}
+    MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin123}
+    MINIO_BUCKET: data-pipeline
+    PYTHONPATH: /opt/airflow/dags:/opt/airflow/spark/jobs
+  volumes:
+    - ./airflow/dags:/opt/airflow/dags
+    - ./airflow/plugins:/opt/airflow/plugins
+    - ./logs/airflow:/opt/airflow/logs
+    - ./spark/jobs:/opt/airflow/spark/jobs
+    - ./airflow/connections.sh:/opt/airflow/airflow_connections.sh
+    - spark-home:/opt/spark:ro
+    - ivy-cache:/home/airflow/.ivy2.5.2
+  user: "${AIRFLOW_UID:-50000}:0"
+  depends_on: &airflow-common-depends-on
+    postgres:
+      condition: service_healthy
+    spark-master:
+      condition: service_healthy
+
+services:
+  # ─────────────────────────────────────────────
+  # PostgreSQL – Airflow metadata DB
+  # ─────────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    container_name: pipeline-postgres
+    environment:
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: airflow
+      POSTGRES_DB: airflow
+    volumes:
+      - postgres-db-volume:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "airflow"]
+      interval: 10s
+      retries: 5
+      start_period: 5s
+    restart: always
+    networks:
+      - pipeline-net
+
+  # ─────────────────────────────────────────────
+  # MinIO – S3-compatible object storage
+  # ─────────────────────────────────────────────
+  minio:
+    image: minio/minio:latest
+    container_name: pipeline-minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin123}
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+    restart: always
+    networks:
+      - pipeline-net
+
+  # Bootstrap MinIO buckets
+  minio-init:
+    image: minio/mc:latest
+    container_name: pipeline-minio-init
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+        mc alias set local http://minio:9000 ${MINIO_ROOT_USER:-minioadmin} ${MINIO_ROOT_PASSWORD:-minioadmin123};
+        mc mb --ignore-existing local/data-pipeline;
+        mc mb --ignore-existing local/pipeline-logs;
+        echo 'MinIO buckets initialised';
+      "
+    networks:
+      - pipeline-net
+
+  # ─────────────────────────────────────────────
+  # Spark 4 – Master
+  # ─────────────────────────────────────────────
+  spark-master:
+    image: apache/spark:4.0.0
+    container_name: pipeline-spark-master
+    user: root
+    command:
+      - /opt/spark/bin/spark-class
+      - org.apache.spark.deploy.master.Master
+      - --host
+      - spark-master
+      - --port
+      - "7077"
+      - --webui-port
+      - "8082"
+    ports:
+      - "8082:8082"
+      - "7077:7077"
+    volumes:
+      - spark-home:/opt/spark
+      - ./spark/jobs:/opt/spark/jobs
+      - ./spark/conf/spark-defaults.conf:/opt/spark/conf/spark-defaults.conf
+      - ./logs/spark:/opt/spark/logs
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8082"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+    restart: always
+    networks:
+      - pipeline-net
+
+  # ─────────────────────────────────────────────
+  # Spark 4 – Worker 1
+  # ─────────────────────────────────────────────
+  spark-worker-1:
+    build: ./spark
+    container_name: pipeline-spark-worker-1
+    user: root
+    command:
+      - /opt/spark/bin/spark-class
+      - org.apache.spark.deploy.worker.Worker
+      - --memory
+      - ${SPARK_WORKER_MEMORY:-2G}
+      - --cores
+      - "${SPARK_WORKER_CORES:-1}"
+      - --webui-port
+      - "8083"
+      - spark://spark-master:7077
+    ports:
+      - "8083:8083"
+    volumes:
+      - ./spark/jobs:/opt/spark/jobs
+      - ./spark/conf/spark-defaults.conf:/opt/spark/conf/spark-defaults.conf
+      - ./logs/spark:/opt/spark/logs
+    depends_on:
+      spark-master:
+        condition: service_healthy
+    restart: always
+    networks:
+      - pipeline-net
+
+  # ─────────────────────────────────────────────
+  # Spark 4 – Worker 2
+  # ─────────────────────────────────────────────
+  spark-worker-2:
+    build: ./spark
+    container_name: pipeline-spark-worker-2
+    user: root
+    command:
+      - /opt/spark/bin/spark-class
+      - org.apache.spark.deploy.worker.Worker
+      - --memory
+      - ${SPARK_WORKER_MEMORY:-2G}
+      - --cores
+      - "${SPARK_WORKER_CORES:-1}"
+      - --webui-port
+      - "8084"
+      - spark://spark-master:7077
+    ports:
+      - "8084:8084"
+    volumes:
+      - ./spark/jobs:/opt/spark/jobs
+      - ./spark/conf/spark-defaults.conf:/opt/spark/conf/spark-defaults.conf
+      - ./logs/spark:/opt/spark/logs
+    depends_on:
+      spark-master:
+        condition: service_healthy
+    restart: always
+    networks:
+      - pipeline-net
+
+  # ─────────────────────────────────────────────
+  # Airflow 3 – DB init + first user
+  # ─────────────────────────────────────────────
+  airflow-init:
+    <<: *airflow-common
+    container_name: pipeline-airflow-init
+    entrypoint: /bin/bash
+    command:
+      - -c
+      - |
+        airflow db migrate
+        airflow users create \
+          --username admin \
+          --firstname Admin \
+          --lastname User \
+          --role Admin \
+          --email admin@example.com \
+          --password admin
+        bash /opt/airflow/airflow_connections.sh
+        echo "Airflow initialised"
+    environment:
+      <<: *airflow-common-env
+      _AIRFLOW_DB_MIGRATE: 'true'
+    networks:
+      - pipeline-net
+
+  # ─────────────────────────────────────────────
+  # Airflow 3 – DAG Processor (required in Airflow 3)
+  # ─────────────────────────────────────────────
+  airflow-dag-processor:
+    <<: *airflow-common
+    container_name: pipeline-airflow-dag-processor
+    command: dag-processor
+    restart: always
+    depends_on:
+      <<: *airflow-common-depends-on
+      airflow-init:
+        condition: service_completed_successfully
+    networks:
+      - pipeline-net
+
+  # ─────────────────────────────────────────────
+  # Airflow 3 – Webserver
+  # ─────────────────────────────────────────────
+  airflow-webserver:
+    <<: *airflow-common
+    container_name: pipeline-airflow-webserver
+    command: api-server
+    ports:
+      - "8080:8080"
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8080/public/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    restart: always
+    depends_on:
+      <<: *airflow-common-depends-on
+      airflow-init:
+        condition: service_completed_successfully
+    networks:
+      - pipeline-net
+
+  # ─────────────────────────────────────────────
+  # Airflow 3 – Scheduler
+  # ─────────────────────────────────────────────
+  airflow-scheduler:
+    <<: *airflow-common
+    container_name: pipeline-airflow-scheduler
+    command: scheduler
+    healthcheck:
+      test: ["CMD-SHELL", "airflow jobs check --job-type SchedulerJob --hostname $(hostname)"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    restart: always
+    depends_on:
+      <<: *airflow-common-depends-on
+      airflow-init:
+        condition: service_completed_successfully
+    networks:
+      - pipeline-net
+
+  # ─────────────────────────────────────────────
+  # Airflow 3 – Triggerer (deferrable operators)
+  # ─────────────────────────────────────────────
+  airflow-triggerer:
+    <<: *airflow-common
+    container_name: pipeline-airflow-triggerer
+    command: triggerer
+    healthcheck:
+      test: ["CMD-SHELL", "airflow jobs check --job-type TriggererJob --hostname $(hostname)"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    restart: always
+    depends_on:
+      <<: *airflow-common-depends-on
+      airflow-init:
+        condition: service_completed_successfully
+    networks:
+      - pipeline-net
+
+  # ─────────────────────────────────────────────
+  # Jupyter – PySpark notebook explorer
+  # ─────────────────────────────────────────────
+  jupyter:
+    build: ./jupyter
+    container_name: pipeline-jupyter
+    ports:
+      - "8888:8888"
+    environment:
+      MINIO_ENDPOINT: http://minio:9000
+      MINIO_ACCESS_KEY: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin123}
+      MINIO_BUCKET: data-pipeline
+      SPARK_MASTER_URL: spark://spark-master:7077
+      PYSPARK_PYTHON: python3.13
+      PYSPARK_DRIVER_PYTHON: python3.13
+    volumes:
+      - ./jupyter/notebooks:/home/jupyter/notebooks
+    depends_on:
+      spark-master:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    restart: always
+    networks:
+      - pipeline-net
+
+volumes:
+  postgres-db-volume:
+  minio-data:
+  spark-home:
+  ivy-cache:
+
+networks:
+  pipeline-net:
+    driver: bridge

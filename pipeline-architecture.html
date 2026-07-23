@@ -1,0 +1,1076 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Spark-Airflow Pipeline Architecture</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'Segoe UI', system-ui, sans-serif; background: #0f1117; color: #e2e8f0; }
+
+  h1 { text-align: center; padding: 32px 20px 8px; font-size: 1.8rem; color: #f0f4ff; letter-spacing: -0.5px; }
+  .subtitle { text-align: center; color: #94a3b8; font-size: 0.95rem; padding-bottom: 32px; }
+
+  .section { max-width: 1400px; margin: 0 auto 48px; padding: 0 24px; }
+  .section-title {
+    font-size: 1.1rem; font-weight: 700; color: #7c91f5; text-transform: uppercase;
+    letter-spacing: 1px; margin-bottom: 20px; padding-bottom: 8px;
+    border-bottom: 2px solid #1e2540;
+  }
+
+  /* ── Infrastructure Grid ── */
+  .infra-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    gap: 16px;
+  }
+
+  .service-card {
+    background: #161b2e;
+    border: 1px solid #263050;
+    border-radius: 12px;
+    padding: 16px 18px;
+    position: relative;
+    transition: border-color 0.2s;
+  }
+  .service-card:hover { border-color: #4a6cf7; }
+
+  .card-header { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+  .card-icon { font-size: 1.4rem; }
+  .card-name { font-weight: 700; font-size: 1rem; }
+  .card-container { font-size: 0.72rem; color: #64748b; font-family: monospace; margin-top: 2px; }
+
+  .badge {
+    font-size: 0.65rem; font-weight: 700; padding: 2px 7px; border-radius: 20px;
+    text-transform: uppercase; letter-spacing: 0.5px; margin-left: auto;
+  }
+  .badge-storage  { background: #1e3a5f; color: #60a5fa; }
+  .badge-compute  { background: #1e3a2e; color: #4ade80; }
+  .badge-orchestrate { background: #3a1e4a; color: #c084fc; }
+  .badge-infra    { background: #3a2a1e; color: #fb923c; }
+  .badge-init     { background: #1e2a3a; color: #94a3b8; }
+
+  .card-detail { font-size: 0.8rem; color: #94a3b8; line-height: 1.6; }
+  .card-detail strong { color: #cbd5e1; }
+
+  .port-tag {
+    display: inline-block; background: #0f172a; border: 1px solid #334155;
+    color: #7dd3fc; font-size: 0.7rem; font-family: monospace;
+    padding: 1px 6px; border-radius: 4px; margin: 2px 2px 0 0;
+  }
+  .vol-tag {
+    display: inline-block; background: #0f172a; border: 1px solid #334155;
+    color: #fbbf24; font-size: 0.7rem; font-family: monospace;
+    padding: 1px 6px; border-radius: 4px; margin: 2px 2px 0 0;
+  }
+
+  /* ── Network box ── */
+  .network-box {
+    border: 2px dashed #263050; border-radius: 16px; padding: 20px;
+    margin-bottom: 16px; position: relative;
+  }
+  .network-label {
+    position: absolute; top: -12px; left: 20px;
+    background: #0f1117; padding: 0 8px;
+    font-size: 0.75rem; color: #4a6cf7; font-weight: 700; letter-spacing: 1px;
+  }
+
+  /* ── DAG Flow ── */
+  .dag-container { display: flex; flex-direction: column; gap: 24px; }
+  .dag-block {
+    background: #161b2e; border: 1px solid #263050; border-radius: 12px;
+    overflow: hidden;
+  }
+  .dag-header {
+    padding: 14px 20px; display: flex; align-items: center; gap: 12px;
+    border-bottom: 1px solid #1e2540;
+  }
+  .dag-num {
+    width: 32px; height: 32px; border-radius: 50%; display: flex;
+    align-items: center; justify-content: center;
+    font-weight: 900; font-size: 1rem;
+  }
+  .dag-01-color { background: #1e3a5f; color: #60a5fa; }
+  .dag-02-color { background: #1e3a2e; color: #4ade80; }
+  .dag-03-color { background: #3a1e4a; color: #c084fc; }
+
+  .dag-title { font-weight: 700; font-size: 1.05rem; }
+  .dag-desc  { font-size: 0.8rem; color: #64748b; margin-left: auto; }
+
+  .dag-body { padding: 20px; }
+
+  .task-flow {
+    display: flex; flex-direction: column; gap: 0;
+  }
+  .task-row {
+    display: flex; align-items: center; gap: 0; flex-wrap: wrap;
+  }
+  .task-row + .task-row { margin-top: 0; }
+
+  .task-box {
+    background: #0f172a; border: 1px solid #334155; border-radius: 8px;
+    padding: 8px 12px; font-size: 0.78rem; font-family: monospace;
+    display: inline-flex; flex-direction: column; min-width: 140px;
+    transition: border-color 0.2s;
+  }
+  .task-box:hover { border-color: #4a6cf7; }
+
+  .task-type {
+    font-size: 0.6rem; text-transform: uppercase; letter-spacing: 0.5px;
+    margin-bottom: 2px; font-family: sans-serif;
+  }
+  .task-type-spark  { color: #fb923c; }
+  .task-type-python { color: #a78bfa; }
+  .task-type-sensor { color: #34d399; }
+
+  .task-name { color: #e2e8f0; font-weight: 600; }
+  .task-desc { font-size: 0.65rem; color: #64748b; margin-top: 2px; font-family: sans-serif; }
+
+  .arrow {
+    color: #334155; font-size: 1.1rem; padding: 0 6px; flex-shrink: 0;
+    align-self: center;
+  }
+  .arrow-down {
+    text-align: center; color: #334155; font-size: 1.2rem; padding: 4px 0;
+    width: 100%;
+  }
+
+  .parallel-group {
+    display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
+  }
+  .fork { color: #4a6cf7; font-weight: 700; font-size: 1rem; padding: 0 4px; }
+
+  /* ── Data Flow ── */
+  .data-flow {
+    display: flex; align-items: stretch; gap: 0; overflow-x: auto;
+    padding-bottom: 8px;
+  }
+  .data-zone {
+    background: #161b2e; border: 1px solid #263050; border-radius: 12px;
+    padding: 20px 24px; min-width: 200px; flex: 1;
+    display: flex; flex-direction: column; gap: 8px;
+  }
+  .data-arrow {
+    display: flex; align-items: center; padding: 0 8px; color: #4a6cf7;
+    font-size: 1.8rem; flex-shrink: 0;
+  }
+  .zone-icon { font-size: 1.8rem; margin-bottom: 4px; }
+  .zone-name { font-weight: 700; font-size: 0.95rem; }
+  .zone-path { font-size: 0.7rem; font-family: monospace; color: #4a6cf7; margin-top: 2px; }
+  .zone-desc { font-size: 0.75rem; color: #94a3b8; line-height: 1.5; margin-top: 6px; }
+  .zone-tag {
+    display: inline-block; font-size: 0.65rem; font-family: monospace;
+    background: #0f172a; border: 1px solid #334155; color: #94a3b8;
+    padding: 2px 6px; border-radius: 4px; margin: 1px;
+  }
+
+  /* ── Legend ── */
+  .legend { display: flex; gap: 20px; flex-wrap: wrap; margin-top: 8px; }
+  .legend-item { display: flex; align-items: center; gap: 6px; font-size: 0.78rem; color: #94a3b8; }
+  .legend-dot { width: 10px; height: 10px; border-radius: 2px; }
+
+  /* ── Execution Timeline ── */
+  .timeline { display: flex; flex-direction: column; gap: 4px; }
+  .timeline-row {
+    display: flex; align-items: center; gap: 12px; padding: 10px 16px;
+    border-radius: 8px; background: #161b2e; border: 1px solid #1e2540;
+  }
+  .tl-num {
+    width: 24px; height: 24px; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 0.75rem; font-weight: 800; flex-shrink: 0;
+  }
+  .tl-arrow { color: #334155; flex-shrink: 0; }
+  .tl-content { flex: 1; }
+  .tl-title { font-size: 0.85rem; font-weight: 600; color: #e2e8f0; }
+  .tl-sub { font-size: 0.72rem; color: #64748b; margin-top: 2px; }
+  .tl-badge {
+    font-size: 0.65rem; font-weight: 700; padding: 2px 8px;
+    border-radius: 20px; white-space: nowrap; flex-shrink: 0;
+  }
+
+  /* colors */
+  .c-blue  { background: #1e3a5f; color: #60a5fa; }
+  .c-green { background: #1e3a2e; color: #4ade80; }
+  .c-purple{ background: #3a1e4a; color: #c084fc; }
+  .c-orange{ background: #3a2210; color: #fb923c; }
+  .c-teal  { background: #0f2d2d; color: #2dd4bf; }
+
+  hr.divider { border: none; border-top: 1px solid #1e2540; margin: 40px 0; }
+
+  /* scrollbar */
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track { background: #0f1117; }
+  ::-webkit-scrollbar-thumb { background: #263050; border-radius: 3px; }
+</style>
+</head>
+<body>
+
+<h1>Spark-Airflow-MinIO Pipeline</h1>
+<p class="subtitle">End-to-end batch data pipeline: 3 DAGs · 5 Spark jobs · Airflow 3 · Spark 4 · MinIO S3-compatible storage</p>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<!-- SECTION 1: INFRASTRUCTURE                                              -->
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<div class="section">
+  <div class="section-title">1 — Docker Services &amp; Infrastructure</div>
+
+  <div class="network-box">
+    <span class="network-label">DOCKER NETWORK: pipeline-net (bridge)</span>
+
+    <!-- Row 1: Storage -->
+    <p style="font-size:0.7rem;color:#4a6cf7;font-weight:700;letter-spacing:1px;margin-bottom:10px;">STORAGE LAYER</p>
+    <div class="infra-grid" style="margin-bottom:20px;">
+
+      <div class="service-card">
+        <div class="card-header">
+          <span class="card-icon">🐘</span>
+          <div>
+            <div class="card-name">PostgreSQL 16</div>
+            <div class="card-container">pipeline-postgres</div>
+          </div>
+          <span class="badge badge-storage">Storage</span>
+        </div>
+        <div class="card-detail">
+          <strong>Role:</strong> Airflow metadata database — stores DAG definitions, task states, logs index, connections, variables<br><br>
+          <strong>Image:</strong> postgres:16-alpine<br>
+          <span class="vol-tag">postgres-db-volume → /var/lib/postgresql/data</span>
+        </div>
+      </div>
+
+      <div class="service-card">
+        <div class="card-header">
+          <span class="card-icon">🪣</span>
+          <div>
+            <div class="card-name">MinIO</div>
+            <div class="card-container">pipeline-minio</div>
+          </div>
+          <span class="badge badge-storage">Storage</span>
+        </div>
+        <div class="card-detail">
+          <strong>Role:</strong> S3-compatible object store for all pipeline data and logs<br><br>
+          <strong>Image:</strong> minio/minio:latest<br>
+          <span class="port-tag">:9000 API</span>
+          <span class="port-tag">:9001 Console</span><br>
+          <span class="vol-tag">minio-data → /data</span><br><br>
+          <strong>Buckets:</strong><br>
+          <span class="zone-tag">data-pipeline</span> raw / staging / processed / aggregated<br>
+          <span class="zone-tag">pipeline-logs</span> airflow task logs + spark event logs
+        </div>
+      </div>
+
+      <div class="service-card">
+        <div class="card-header">
+          <span class="card-icon">⚙️</span>
+          <div>
+            <div class="card-name">MinIO Init</div>
+            <div class="card-container">pipeline-minio-init</div>
+          </div>
+          <span class="badge badge-init">One-shot</span>
+        </div>
+        <div class="card-detail">
+          <strong>Role:</strong> Bootstrap job — creates the two MinIO buckets on first start, then exits<br><br>
+          <strong>Image:</strong> minio/mc:latest<br><br>
+          Creates: <span class="zone-tag">data-pipeline</span> <span class="zone-tag">pipeline-logs</span>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- Row 2: Compute -->
+    <p style="font-size:0.7rem;color:#4ade80;font-weight:700;letter-spacing:1px;margin-bottom:10px;">COMPUTE LAYER</p>
+    <div class="infra-grid" style="margin-bottom:20px;">
+
+      <div class="service-card">
+        <div class="card-header">
+          <span class="card-icon">⚡</span>
+          <div>
+            <div class="card-name">Spark Master</div>
+            <div class="card-container">pipeline-spark-master</div>
+          </div>
+          <span class="badge badge-compute">Compute</span>
+        </div>
+        <div class="card-detail">
+          <strong>Role:</strong> Spark cluster coordinator — accepts spark-submit jobs, allocates executors, tracks app state<br><br>
+          <strong>Image:</strong> apache/spark:4.0.0 (official)<br>
+          <span class="port-tag">:7077 Spark protocol</span>
+          <span class="port-tag">:8082 Web UI</span><br>
+          <span class="vol-tag">spark-home → /opt/spark</span> (shared with Airflow)
+        </div>
+      </div>
+
+      <div class="service-card">
+        <div class="card-header">
+          <span class="card-icon">🔧</span>
+          <div>
+            <div class="card-name">Spark Worker 1</div>
+            <div class="card-container">pipeline-spark-worker-1</div>
+          </div>
+          <span class="badge badge-compute">Compute</span>
+        </div>
+        <div class="card-detail">
+          <strong>Role:</strong> Executes Spark tasks (map/reduce/shuffle). Claims 2G RAM + 2 cores by default<br><br>
+          <strong>Image:</strong> Custom build from <span class="zone-tag">spark/Dockerfile</span><br>
+          apache/spark:4.0.0 + Python 3.13 (deadsnakes PPA)<br>
+          <span class="port-tag">:8083 Worker UI</span>
+        </div>
+      </div>
+
+      <div class="service-card">
+        <div class="card-header">
+          <span class="card-icon">🔧</span>
+          <div>
+            <div class="card-name">Spark Worker 2</div>
+            <div class="card-container">pipeline-spark-worker-2</div>
+          </div>
+          <span class="badge badge-compute">Compute</span>
+        </div>
+        <div class="card-detail">
+          <strong>Role:</strong> Second Spark executor node — parallel task execution with Worker 1<br><br>
+          <strong>Image:</strong> Same custom build as Worker 1<br>
+          Python 3.13 parity with Airflow driver (avoids PYTHON_VERSION_MISMATCH)<br>
+          <span class="port-tag">:8084 Worker UI</span>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- Row 3: Orchestration -->
+    <p style="font-size:0.7rem;color:#c084fc;font-weight:700;letter-spacing:1px;margin-bottom:10px;">ORCHESTRATION LAYER (Airflow 3 — shared build from airflow/Dockerfile)</p>
+    <div class="infra-grid">
+
+      <div class="service-card">
+        <div class="card-header">
+          <span class="card-icon">🔄</span>
+          <div>
+            <div class="card-name">Airflow Init</div>
+            <div class="card-container">pipeline-airflow-init</div>
+          </div>
+          <span class="badge badge-init">One-shot</span>
+        </div>
+        <div class="card-detail">
+          <strong>Role:</strong> Database migration + user creation + connection setup, then exits<br><br>
+          Runs: <span class="zone-tag">airflow db migrate</span> <span class="zone-tag">airflow users create</span> <span class="zone-tag">connections.sh</span><br><br>
+          Registers Spark &amp; MinIO connections so DAGs can reference them by ID
+        </div>
+      </div>
+
+      <div class="service-card">
+        <div class="card-header">
+          <span class="card-icon">🌐</span>
+          <div>
+            <div class="card-name">Airflow Webserver</div>
+            <div class="card-container">pipeline-airflow-webserver</div>
+          </div>
+          <span class="badge badge-orchestrate">Orchestrate</span>
+        </div>
+        <div class="card-detail">
+          <strong>Role:</strong> Serves the Airflow 3 API server (command: <span class="zone-tag">api-server</span>)<br><br>
+          • REST API at <span class="zone-tag">/public/</span><br>
+          • Task Execution API at <span class="zone-tag">/execution/</span> — task subprocesses phone home here for context/XCom<br>
+          <span class="port-tag">:8080 API + UI</span>
+        </div>
+      </div>
+
+      <div class="service-card">
+        <div class="card-header">
+          <span class="card-icon">📅</span>
+          <div>
+            <div class="card-name">Airflow Scheduler</div>
+            <div class="card-container">pipeline-airflow-scheduler</div>
+          </div>
+          <span class="badge badge-orchestrate">Orchestrate</span>
+        </div>
+        <div class="card-detail">
+          <strong>Role:</strong> Evaluates DAG schedules, sets task states to "queued", generates JWT tokens for task execution, hands work to the LocalExecutor<br><br>
+          Also runs DAG tasks as subprocesses (LocalExecutor mode)
+        </div>
+      </div>
+
+      <div class="service-card">
+        <div class="card-header">
+          <span class="card-icon">📁</span>
+          <div>
+            <div class="card-name">DAG Processor</div>
+            <div class="card-container">pipeline-airflow-dag-processor</div>
+          </div>
+          <span class="badge badge-orchestrate">Orchestrate</span>
+        </div>
+        <div class="card-detail">
+          <strong>Role:</strong> Airflow 3 required component — parses DAG files from disk into the database independently of the scheduler<br><br>
+          Keeps DAG definitions current without scheduler restarts
+        </div>
+      </div>
+
+      <div class="service-card">
+        <div class="card-header">
+          <span class="card-icon">⏰</span>
+          <div>
+            <div class="card-name">Airflow Triggerer</div>
+            <div class="card-container">pipeline-airflow-triggerer</div>
+          </div>
+          <span class="badge badge-orchestrate">Orchestrate</span>
+        </div>
+        <div class="card-detail">
+          <strong>Role:</strong> Manages deferrable operators (async sensors) — resumes tasks when their trigger condition is met without occupying a worker slot<br><br>
+          Used by: ExternalTaskSensor (between DAGs)
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- Volumes -->
+  <div style="margin-top:16px;">
+    <p style="font-size:0.75rem;color:#94a3b8;margin-bottom:8px;font-weight:600;">NAMED VOLUMES</p>
+    <div style="display:flex;gap:10px;flex-wrap:wrap;">
+      <div style="background:#161b2e;border:1px solid #263050;border-radius:8px;padding:10px 14px;font-size:0.78rem;">
+        <span class="vol-tag">postgres-db-volume</span><br>
+        <span style="color:#64748b;">Airflow metadata DB persistence</span>
+      </div>
+      <div style="background:#161b2e;border:1px solid #263050;border-radius:8px;padding:10px 14px;font-size:0.78rem;">
+        <span class="vol-tag">minio-data</span><br>
+        <span style="color:#64748b;">All pipeline data (raw/processed/aggregated)</span>
+      </div>
+      <div style="background:#161b2e;border:1px solid #263050;border-radius:8px;padding:10px 14px;font-size:0.78rem;">
+        <span class="vol-tag">spark-home</span><br>
+        <span style="color:#64748b;">Spark binaries shared: master → Airflow containers (read-only)</span>
+      </div>
+      <div style="background:#161b2e;border:1px solid #263050;border-radius:8px;padding:10px 14px;font-size:0.78rem;">
+        <span class="vol-tag">ivy-cache</span><br>
+        <span style="color:#64748b;">Maven JAR cache — avoids re-downloading hadoop-aws on every run</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<hr class="divider">
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<!-- SECTION 2: DAG EXECUTION FLOW                                          -->
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<div class="section">
+  <div class="section-title">2 — DAG Execution Flow</div>
+
+  <div style="margin-bottom:16px;" class="legend">
+    <div class="legend-item"><div class="legend-dot" style="background:#fb923c;"></div>SparkSubmitOperator</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#a78bfa;"></div>PythonOperator</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#34d399;"></div>ExternalTaskSensor</div>
+    <div class="legend-item" style="margin-left:16px;"><span style="color:#4a6cf7">→ →</span>&nbsp;Sequential dependency</div>
+    <div class="legend-item"><span style="color:#4a6cf7">⑂</span>&nbsp;Parallel fan-out</div>
+  </div>
+
+  <div class="dag-container">
+
+    <!-- DAG 01 -->
+    <div class="dag-block">
+      <div class="dag-header">
+        <div class="dag-num dag-01-color">01</div>
+        <div>
+          <div class="dag-title">Data Ingestion</div>
+          <div style="font-size:0.78rem;color:#64748b;">dag_id: 01_data_ingestion · @daily · script: 01_generate_ingest.py</div>
+        </div>
+        <span class="dag-desc">Generates 100K synthetic e-commerce orders → writes raw Parquet to MinIO</span>
+      </div>
+      <div class="dag-body">
+        <div class="task-flow">
+
+          <div class="task-row">
+            <!-- validate_config -->
+            <div class="task-box">
+              <span class="task-type task-type-python">PythonOperator</span>
+              <span class="task-name">validate_config</span>
+              <span class="task-desc">Checks env vars: MINIO_ENDPOINT, SPARK_MASTER_URL, MINIO_BUCKET</span>
+            </div>
+          </div>
+
+          <div class="arrow-down">↓</div>
+
+          <!-- parallel: ping_spark + ping_minio -->
+          <div class="task-row">
+            <div class="parallel-group">
+              <div class="task-box">
+                <span class="task-type task-type-python">PythonOperator</span>
+                <span class="task-name">ping_spark</span>
+                <span class="task-desc">HTTP GET spark-master:8082 → verifies cluster is alive</span>
+              </div>
+              <span class="fork">⑂</span>
+              <div class="task-box">
+                <span class="task-type task-type-python">PythonOperator</span>
+                <span class="task-name">ping_minio</span>
+                <span class="task-desc">HTTP GET minio:9000/health/live → verifies object store</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="arrow-down">↓ (both done)</div>
+
+          <!-- generate_raw_data -->
+          <div class="task-row">
+            <div class="task-box" style="min-width:320px;">
+              <span class="task-type task-type-spark">SparkSubmitOperator</span>
+              <span class="task-name">generate_raw_data</span>
+              <span class="task-desc">
+                Runs 01_generate_ingest.py on Spark cluster<br>
+                Generates 100,000 synthetic orders (Faker) with 16 fields:<br>
+                order_id, customer_id, product_id, category, sub_category,<br>
+                region, country, channel, quantity, unit_price, discount_pct,<br>
+                revenue, event_ts, payment_method, is_returned, promo_code<br>
+                Writes partitioned Parquet → s3a://data-pipeline/raw/year=Y/month=M/day=D/
+              </span>
+            </div>
+          </div>
+
+          <div class="arrow-down">↓</div>
+
+          <!-- parallel: verify_row_count + verify_schema -->
+          <div class="task-row">
+            <div class="parallel-group">
+              <div class="task-box">
+                <span class="task-type task-type-python">PythonOperator</span>
+                <span class="task-name">verify_row_count</span>
+                <span class="task-desc">Confirms row count ≥ expected minimum</span>
+              </div>
+              <span class="fork">⑂</span>
+              <div class="task-box">
+                <span class="task-type task-type-python">PythonOperator</span>
+                <span class="task-name">verify_schema</span>
+                <span class="task-desc">Confirms 16-column schema matches spec</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="arrow-down">↓ (both done)</div>
+
+          <div class="task-row">
+            <div class="task-box">
+              <span class="task-type task-type-python">PythonOperator</span>
+              <span class="task-name">tag_run_success</span>
+              <span class="task-desc">Marks ingestion complete — ExternalTaskSensor in DAG 02 watches this</span>
+            </div>
+          </div>
+
+        </div>
+      </div>
+    </div>
+
+    <!-- Arrow between DAGs -->
+    <div style="text-align:center;color:#4a6cf7;font-size:0.85rem;padding:4px 0;">
+      ExternalTaskSensor watches <code style="background:#161b2e;padding:2px 6px;border-radius:4px;">01_data_ingestion.tag_run_success</code>
+    </div>
+
+    <!-- DAG 02 -->
+    <div class="dag-block">
+      <div class="dag-header">
+        <div class="dag-num dag-02-color">02</div>
+        <div>
+          <div class="dag-title">Data Processing</div>
+          <div style="font-size:0.78rem;color:#64748b;">dag_id: 02_data_processing · @daily · script: 02_process_data.py (3 phases)</div>
+        </div>
+        <span class="dag-desc">3-phase Spark ETL: filter → enrich → write to processed zone</span>
+      </div>
+      <div class="dag-body">
+        <div class="task-flow">
+
+          <div class="task-row">
+            <div class="task-box" style="border-color:#34d399;">
+              <span class="task-type task-type-sensor">ExternalTaskSensor</span>
+              <span class="task-name">wait_for_ingestion</span>
+              <span class="task-desc">Pokes every 30s until DAG 01 tag_run_success = success</span>
+            </div>
+          </div>
+
+          <div class="arrow-down">↓</div>
+
+          <!-- parallel: profile + check_partition -->
+          <div class="task-row">
+            <div class="parallel-group">
+              <div class="task-box">
+                <span class="task-type task-type-python">PythonOperator</span>
+                <span class="task-name">profile_raw_data</span>
+                <span class="task-desc">Logs expected partition path + schema column count</span>
+              </div>
+              <span class="fork">⑂</span>
+              <div class="task-box">
+                <span class="task-type task-type-python">PythonOperator</span>
+                <span class="task-name">check_partition_exists</span>
+                <span class="task-desc">Confirms year/month/day partition is present in raw zone</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="arrow-down">↓ (both done)</div>
+
+          <div class="task-row">
+            <div class="task-box" style="min-width:300px;">
+              <span class="task-type task-type-spark">SparkSubmitOperator — Phase: clean</span>
+              <span class="task-name">clean_data</span>
+              <span class="task-desc">
+                Reads raw/ Parquet → drops nulls (order_id) + non-positive revenue/quantity<br>
+                Writes to s3a://data-pipeline/staging/clean/year=Y/month=M/day=D/
+              </span>
+            </div>
+          </div>
+
+          <div class="arrow-down">↓</div>
+
+          <div class="task-row">
+            <div class="task-box" style="min-width:300px;">
+              <span class="task-type task-type-spark">SparkSubmitOperator — Phase: enrich</span>
+              <span class="task-name">enrich_data</span>
+              <span class="task-desc">
+                Reads staging/clean/ → adds: event_ts_utc, event_hour, event_weekday, is_weekend,<br>
+                price_tier (Budget/Mid-Range/Premium/Luxury), revenue_band (Low/Medium/High/Very High),<br>
+                is_discounted, gross_margin_est, processing_ts, country_name (lookup join)<br>
+                Writes to s3a://data-pipeline/staging/enriched/year=Y/month=M/day=D/
+              </span>
+            </div>
+          </div>
+
+          <div class="arrow-down">↓</div>
+
+          <!-- parallel: validate_no_nulls + validate_revenue_positive -->
+          <div class="task-row">
+            <div class="parallel-group">
+              <div class="task-box">
+                <span class="task-type task-type-python">PythonOperator</span>
+                <span class="task-name">validate_no_nulls</span>
+                <span class="task-desc">Checks order_id, customer_id, revenue are non-null</span>
+              </div>
+              <span class="fork">⑂</span>
+              <div class="task-box">
+                <span class="task-type task-type-python">PythonOperator</span>
+                <span class="task-name">validate_revenue_positive</span>
+                <span class="task-desc">Confirms revenue > 0 constraint holds</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="arrow-down">↓ (both pass)</div>
+
+          <div class="task-row">
+            <div class="task-box" style="min-width:300px;">
+              <span class="task-type task-type-spark">SparkSubmitOperator — Phase: write</span>
+              <span class="task-name">write_processed</span>
+              <span class="task-desc">
+                Reads staging/enriched/ → repartitions by category (4 files/category)<br>
+                Writes final Parquet partitioned by category/year/month/day<br>
+                Output: s3a://data-pipeline/processed/category=X/year=Y/month=M/day=D/
+              </span>
+            </div>
+          </div>
+
+          <div class="arrow-down">↓</div>
+
+          <div class="task-row">
+            <div class="task-box">
+              <span class="task-type task-type-python">PythonOperator</span>
+              <span class="task-name">log_processing_stats</span>
+              <span class="task-desc">Logs run_id, date, transforms applied, output path</span>
+            </div>
+          </div>
+
+        </div>
+      </div>
+    </div>
+
+    <!-- Arrow between DAGs -->
+    <div style="text-align:center;color:#4a6cf7;font-size:0.85rem;padding:4px 0;">
+      ExternalTaskSensor watches <code style="background:#161b2e;padding:2px 6px;border-radius:4px;">02_data_processing.log_processing_stats</code>
+    </div>
+
+    <!-- DAG 03 -->
+    <div class="dag-block">
+      <div class="dag-header">
+        <div class="dag-num dag-03-color">03</div>
+        <div>
+          <div class="dag-title">Data Aggregation</div>
+          <div style="font-size:0.78rem;color:#64748b;">dag_id: 03_data_aggregation · @daily · script: 03_aggregate.py (3 agg types)</div>
+        </div>
+        <span class="dag-desc">Fan-out 3 parallel Spark aggregations → cross-validate → manifest → notify</span>
+      </div>
+      <div class="dag-body">
+        <div class="task-flow">
+
+          <div class="task-row">
+            <div class="task-box" style="border-color:#34d399;">
+              <span class="task-type task-type-sensor">ExternalTaskSensor</span>
+              <span class="task-name">wait_for_processing</span>
+              <span class="task-desc">Pokes every 30s until DAG 02 log_processing_stats = success</span>
+            </div>
+          </div>
+
+          <div class="arrow-down">↓</div>
+
+          <!-- 3 parallel Spark aggs -->
+          <div class="task-row">
+            <div class="parallel-group">
+              <div class="task-box" style="min-width:200px;">
+                <span class="task-type task-type-spark">SparkSubmitOperator</span>
+                <span class="task-name">aggregate_daily_summary</span>
+                <span class="task-desc">
+                  Groups by category, region, channel, price_tier<br>
+                  Metrics: order_count, total_revenue, avg_order_value,<br>
+                  unique_customers, discount_rate, revenue_per_unit<br>
+                  → aggregated/daily_summary/year=Y/month=M/day=D/
+                </span>
+              </div>
+              <span class="fork">⑂</span>
+              <div class="task-box" style="min-width:200px;">
+                <span class="task-type task-type-spark">SparkSubmitOperator</span>
+                <span class="task-name">aggregate_category_ranking</span>
+                <span class="task-desc">
+                  Month-to-date totals per category + sub_category<br>
+                  Adds revenue_rank (window) + revenue_pct of total<br>
+                  → aggregated/category_ranking/year=Y/month=M/
+                </span>
+              </div>
+              <span class="fork">⑂</span>
+              <div class="task-box" style="min-width:200px;">
+                <span class="task-type task-type-spark">SparkSubmitOperator</span>
+                <span class="task-name">aggregate_hourly_trends</span>
+                <span class="task-desc">
+                  Groups by event_hour, channel, is_weekend<br>
+                  Metrics: order_count, avg_order_value, orders_per_minute<br>
+                  + cumulative_revenue (window by channel)<br>
+                  → aggregated/hourly_trends/year=Y/month=M/day=D/
+                </span>
+              </div>
+            </div>
+          </div>
+
+          <div class="arrow-down">↓ (all three done)</div>
+
+          <div class="task-row">
+            <div class="task-box">
+              <span class="task-type task-type-python">PythonOperator</span>
+              <span class="task-name">cross_validate_totals</span>
+              <span class="task-desc">Spot-checks: daily_summary.total_revenue ≈ sum(hourly_trends.total_revenue), category_ranking row count &gt; 0</span>
+            </div>
+          </div>
+
+          <div class="arrow-down">↓</div>
+
+          <!-- parallel: write_run_manifest + refresh_pipeline_stats -->
+          <div class="task-row">
+            <div class="parallel-group">
+              <div class="task-box">
+                <span class="task-type task-type-python">PythonOperator</span>
+                <span class="task-name">write_run_manifest</span>
+                <span class="task-desc">Writes JSON manifest: run_id, logical_date, output paths, status=success</span>
+              </div>
+              <span class="fork">⑂</span>
+              <div class="task-box">
+                <span class="task-type task-type-python">PythonOperator</span>
+                <span class="task-name">refresh_pipeline_stats</span>
+                <span class="task-desc">Updates metrics: last_successful_run, rows_processed, agg_coverage</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="arrow-down">↓ (both done)</div>
+
+          <div class="task-row">
+            <div class="task-box" style="border-color:#c084fc;">
+              <span class="task-type task-type-python">PythonOperator</span>
+              <span class="task-name">notify_pipeline_complete</span>
+              <span class="task-desc">Logs full pipeline COMPLETE: run_id, date, DAG chain 01→02→03 ✓</span>
+            </div>
+          </div>
+
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<hr class="divider">
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<!-- SECTION 3: DATA ZONE FLOW                                              -->
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<div class="section">
+  <div class="section-title">3 — Data Zone Flow (MinIO: data-pipeline bucket)</div>
+
+  <div class="data-flow">
+
+    <div class="data-zone" style="border-color:#1e3a5f;">
+      <div class="zone-icon">📥</div>
+      <div class="zone-name" style="color:#60a5fa;">Raw Zone</div>
+      <div class="zone-path">s3a://data-pipeline/raw/</div>
+      <div class="zone-desc">
+        Synthetic e-commerce orders generated by Spark (Faker).<br>
+        Partitioned by ingestion date.<br><br>
+        <strong>Format:</strong> Snappy Parquet<br>
+        <strong>Partition:</strong> year / month / day<br>
+        <strong>Rows:</strong> 100,000 / run<br>
+        <strong>Columns:</strong> 16 raw fields
+      </div>
+      <div style="margin-top:8px;">
+        <span class="zone-tag">order_id</span>
+        <span class="zone-tag">customer_id</span>
+        <span class="zone-tag">product_id</span>
+        <span class="zone-tag">category</span>
+        <span class="zone-tag">region</span>
+        <span class="zone-tag">country</span>
+        <span class="zone-tag">revenue</span>
+        <span class="zone-tag">event_ts</span>
+        <span class="zone-tag">+8 more</span>
+      </div>
+    </div>
+
+    <div class="data-arrow">→</div>
+
+    <div class="data-zone" style="border-color:#263050;">
+      <div class="zone-icon">🧹</div>
+      <div class="zone-name" style="color:#94a3b8;">Staging: Clean</div>
+      <div class="zone-path">s3a://data-pipeline/staging/clean/</div>
+      <div class="zone-desc">
+        Quality-filtered subset.<br><br>
+        <strong>Dropped:</strong> null order_id, revenue ≤ 0, quantity ≤ 0<br>
+        <strong>Retained:</strong> all 16 raw columns<br>
+        <strong>Format:</strong> Snappy Parquet<br>
+        <strong>Partition:</strong> year / month / day
+      </div>
+    </div>
+
+    <div class="data-arrow">→</div>
+
+    <div class="data-zone" style="border-color:#263050;">
+      <div class="zone-icon">✨</div>
+      <div class="zone-name" style="color:#94a3b8;">Staging: Enriched</div>
+      <div class="zone-path">s3a://data-pipeline/staging/enriched/</div>
+      <div class="zone-desc">
+        16 raw + 9 derived columns.<br><br>
+        <strong>Added:</strong> event_ts_utc, event_hour, event_weekday, is_weekend, price_tier, revenue_band, is_discounted, gross_margin_est, country_name<br>
+        <strong>Format:</strong> Snappy Parquet<br>
+        <strong>Partition:</strong> year / month / day
+      </div>
+    </div>
+
+    <div class="data-arrow">→</div>
+
+    <div class="data-zone" style="border-color:#1e3a2e;">
+      <div class="zone-icon">✅</div>
+      <div class="zone-name" style="color:#4ade80;">Processed Zone</div>
+      <div class="zone-path">s3a://data-pipeline/processed/</div>
+      <div class="zone-desc">
+        Production-ready, analysis-optimized.<br><br>
+        <strong>Repartitioned:</strong> 4 files per category<br>
+        <strong>Partition:</strong> category / year / month / day<br>
+        <strong>Format:</strong> Snappy Parquet<br>
+        <strong>Columns:</strong> 25 total (16 raw + 9 enriched)
+      </div>
+    </div>
+
+    <div class="data-arrow">→</div>
+
+    <div class="data-zone" style="border-color:#3a1e4a;">
+      <div class="zone-icon">📊</div>
+      <div class="zone-name" style="color:#c084fc;">Aggregated Zone</div>
+      <div class="zone-path">s3a://data-pipeline/aggregated/</div>
+      <div class="zone-desc">
+        Three independent aggregate datasets:<br><br>
+        <span class="zone-tag">daily_summary/</span> Revenue + orders by category×region×channel<br><br>
+        <span class="zone-tag">category_ranking/</span> MTD rank + revenue share by category<br><br>
+        <span class="zone-tag">hourly_trends/</span> Orders + revenue by hour of day<br><br>
+        <strong>Format:</strong> Snappy Parquet
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<hr class="divider">
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<!-- SECTION 4: EXECUTION SEQUENCE                                          -->
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<div class="section">
+  <div class="section-title">4 — End-to-End Execution Sequence</div>
+
+  <div class="timeline">
+
+    <div class="timeline-row">
+      <div class="tl-num c-orange">0</div>
+      <div class="tl-content">
+        <div class="tl-title">docker compose up — Infrastructure starts</div>
+        <div class="tl-sub">PostgreSQL ready → minio-init creates buckets → Spark master up → airflow-init runs DB migration + creates admin user + registers connections (spark_default → spark://spark-master:7077, minio_default → http://minio:9000)</div>
+      </div>
+      <span class="tl-badge c-orange">Bootstrap</span>
+    </div>
+
+    <div class="timeline-row">
+      <div class="tl-num c-blue">1</div>
+      <div class="tl-content">
+        <div class="tl-title">DAG 01 triggered → validate_config + ping_spark/minio</div>
+        <div class="tl-sub">Scheduler evaluates the @daily schedule (or manual trigger). PythonOperators verify env vars and connectivity to Spark master and MinIO health endpoint.</div>
+      </div>
+      <span class="tl-badge c-blue">DAG 01</span>
+    </div>
+
+    <div class="timeline-row">
+      <div class="tl-num c-blue">2</div>
+      <div class="tl-content">
+        <div class="tl-title">generate_raw_data — Spark job submitted</div>
+        <div class="tl-sub">SparkSubmitOperator calls spark-submit (on PATH via /opt/spark/bin). Spark downloads hadoop-aws + aws-java-sdk-bundle JARs, connects to spark://spark-master:7077, allocates executors on Worker 1 and Worker 2, generates 100K synthetic orders using Faker, writes Snappy Parquet to s3a://data-pipeline/raw/year=Y/month=M/day=D/ via S3A connector (path-style access to MinIO).</div>
+      </div>
+      <span class="tl-badge c-blue">Spark</span>
+    </div>
+
+    <div class="timeline-row">
+      <div class="tl-num c-blue">3</div>
+      <div class="tl-content">
+        <div class="tl-title">verify_row_count + verify_schema → tag_run_success</div>
+        <div class="tl-sub">Python tasks confirm output quality. tag_run_success succeeds, which the ExternalTaskSensor in DAG 02 is polling for.</div>
+      </div>
+      <span class="tl-badge c-blue">DAG 01 ✓</span>
+    </div>
+
+    <div class="timeline-row">
+      <div class="tl-num c-green">4</div>
+      <div class="tl-content">
+        <div class="tl-title">DAG 02 triggered → wait_for_ingestion sensor clears</div>
+        <div class="tl-sub">ExternalTaskSensor matches logical_date (same date for scheduled runs). profile_raw_data + check_partition_exists run in parallel.</div>
+      </div>
+      <span class="tl-badge c-green">DAG 02</span>
+    </div>
+
+    <div class="timeline-row">
+      <div class="tl-num c-green">5</div>
+      <div class="tl-content">
+        <div class="tl-title">clean_data (Spark) → enrich_data (Spark) → write_processed (Spark)</div>
+        <div class="tl-sub">Three sequential Spark jobs share the same script (02_process_data.py) called with --phase clean / enrich / write. Each reads from the previous phase's output in MinIO, adds transformations, and writes to the next zone. Dynamic allocation scales executors up/down between jobs.</div>
+      </div>
+      <span class="tl-badge c-green">Spark ×3</span>
+    </div>
+
+    <div class="timeline-row">
+      <div class="tl-num c-green">6</div>
+      <div class="tl-content">
+        <div class="tl-title">validate_no_nulls + validate_revenue_positive → write_processed → log_processing_stats</div>
+        <div class="tl-sub">Dual validation gates run in parallel before the final write phase. 100K enriched rows written to processed zone partitioned by category.</div>
+      </div>
+      <span class="tl-badge c-green">DAG 02 ✓</span>
+    </div>
+
+    <div class="timeline-row">
+      <div class="tl-num c-purple">7</div>
+      <div class="tl-content">
+        <div class="tl-title">DAG 03 triggered → 3 parallel Spark aggregations fan out</div>
+        <div class="tl-sub">aggregate_daily_summary, aggregate_category_ranking, and aggregate_hourly_trends all submit to the Spark cluster simultaneously. Each reads from processed/ and writes to its own aggregated/ sub-path. Dynamic allocation handles the competing resource requests.</div>
+      </div>
+      <span class="tl-badge c-purple">Spark ×3 parallel</span>
+    </div>
+
+    <div class="timeline-row">
+      <div class="tl-num c-purple">8</div>
+      <div class="tl-content">
+        <div class="tl-title">cross_validate_totals → write_run_manifest + refresh_pipeline_stats → notify_pipeline_complete</div>
+        <div class="tl-sub">Cross-validation confirms aggregate consistency. Manifest JSON is logged with all output paths. Final notify task confirms the full 3-DAG chain is complete.</div>
+      </div>
+      <span class="tl-badge c-purple">DAG 03 ✓</span>
+    </div>
+
+    <div class="timeline-row" style="border-color:#4a6cf7;">
+      <div class="tl-num" style="background:#1a2550;color:#4a6cf7;">✓</div>
+      <div class="tl-content">
+        <div class="tl-title" style="color:#4a6cf7;">Pipeline complete — all data in MinIO, logs in pipeline-logs bucket</div>
+        <div class="tl-sub">Airflow task logs are shipped to s3://pipeline-logs/airflow/ (remote logging via S3 handler). Spark event logs go to s3a://pipeline-logs/spark/. All intermediate (staging/) and final (processed/, aggregated/) data is in the data-pipeline bucket.</div>
+      </div>
+      <span class="tl-badge" style="background:#1a2550;color:#4a6cf7;">Done</span>
+    </div>
+
+  </div>
+</div>
+
+<hr class="divider">
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<!-- SECTION 5: KEY ARCHITECTURAL DECISIONS                                 -->
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<div class="section">
+  <div class="section-title">5 — Key Architectural Decisions &amp; Why</div>
+
+  <div class="infra-grid">
+
+    <div class="service-card">
+      <div class="card-header">
+        <span class="card-icon">🔐</span>
+        <div class="card-name">Airflow 3 JWT Auth</div>
+      </div>
+      <div class="card-detail">
+        Airflow 3's LocalExecutor runs tasks as subprocesses that must call back to the <strong>Execution API</strong> at <code>http://airflow-webserver:8080/execution/</code> to fetch context and report state.<br><br>
+        Both the scheduler (token issuer) and the webserver (token verifier) share a fixed <code>AIRFLOW__API_AUTH__JWT_SECRET</code>. Without this, tasks fail with "Signature verification failed".
+      </div>
+    </div>
+
+    <div class="service-card">
+      <div class="card-header">
+        <span class="card-icon">🐍</span>
+        <div class="card-name">Python Version Parity</div>
+      </div>
+      <div class="card-detail">
+        PySpark requires identical Python versions on the driver (Airflow container, Python 3.13) and executors (Spark workers). The stock <code>apache/spark:4.0.0</code> image only has Python 3.10.<br><br>
+        A custom <code>spark/Dockerfile</code> installs Python 3.13 via the deadsnakes PPA and sets <code>PYSPARK_PYTHON=python3.13</code>. Airflow sets <code>PYSPARK_DRIVER_PYTHON=python3</code>.
+      </div>
+    </div>
+
+    <div class="service-card">
+      <div class="card-header">
+        <span class="card-icon">📁</span>
+        <div class="card-name">spark-home Volume</div>
+      </div>
+      <div class="card-detail">
+        Airflow containers need the <code>spark-submit</code> binary to submit jobs. Rather than installing Spark twice, the <code>spark-home</code> named volume is populated by the spark-master container and mounted <strong>read-only</strong> into all Airflow containers.<br><br>
+        Airflow's PATH includes <code>/opt/spark/bin</code> so <code>spark-submit</code> is found without a full path.
+      </div>
+    </div>
+
+    <div class="service-card">
+      <div class="card-header">
+        <span class="card-icon">🗂️</span>
+        <div class="card-name">3-Phase Processing</div>
+      </div>
+      <div class="card-detail">
+        DAG 02 splits ETL into three sequential Spark tasks (clean → enrich → write) each calling the same script with <code>--phase</code>. This gives:<br><br>
+        • Fine-grained task visibility in the Airflow UI<br>
+        • Ability to retry individual phases without re-running earlier ones<br>
+        • Intermediate checkpoints in MinIO (staging/clean/, staging/enriched/)
+      </div>
+    </div>
+
+    <div class="service-card">
+      <div class="card-header">
+        <span class="card-icon">⚡</span>
+        <div class="card-name">Dynamic Allocation</div>
+      </div>
+      <div class="card-detail">
+        All Spark jobs use <code>spark.dynamicAllocation.enabled=true</code> with shuffle tracking. This means:<br><br>
+        • Executors scale 0 → 4 based on pending tasks<br>
+        • Executors are released when idle (no external shuffle service needed)<br>
+        • The 3 parallel DAG 03 aggregations share the cluster's 4G/4 cores fairly
+      </div>
+    </div>
+
+    <div class="service-card">
+      <div class="card-header">
+        <span class="card-icon">🪵</span>
+        <div class="card-name">Remote Logging to MinIO</div>
+      </div>
+      <div class="card-detail">
+        Airflow task logs are shipped to <code>s3://pipeline-logs/airflow/</code> via the <code>apache-airflow-providers-amazon</code> S3 log handler. The connection <code>minio_default</code> uses an AWS-type connection with <code>endpoint_url</code> set to MinIO (path-style access, no TLS).<br><br>
+        This makes logs durable across container restarts.
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<div style="text-align:center;padding:32px;color:#334155;font-size:0.78rem;">
+  spark-airflow-pipeline · Airflow 3.2.1 · Spark 4.0.0 · MinIO · PostgreSQL 16 · Python 3.13
+</div>
+
+</body>
+</html>

@@ -1,0 +1,15 @@
+# Environment
+.env
+.env.local
+
+# Runtime logs (mounted into containers)
+logs/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+
+# macOS
+.DS_Store

@@ -1,0 +1,8 @@
+jupyterlab==4.4.2
+pyspark==4.0.0
+pandas==2.2.3
+pyarrow==19.0.1
+matplotlib==3.10.3
+seaborn==0.13.2
+boto3==1.38.15
+ipywidgets==8.1.7

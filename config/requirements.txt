@@ -1,0 +1,8 @@
+# Extra Python packages installed into the Airflow image at startup.
+# The Airflow image itself ships with:
+#   - apache-airflow[amazon,apache.spark] already installed
+# We pin additional helpers here.
+
+apache-airflow-providers-apache-spark==4.11.1
+apache-airflow-providers-amazon==8.30.0
+boto3>=1.34.0
